@@ -2,7 +2,6 @@
 #include <QDebug>
 #include <openssl/ec.h>
 #include <openssl/obj_mac.h>
-#include <openssl/engine.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/hmac.h>
@@ -11,26 +10,42 @@ DHKE::DHKE(QObject *parent)
     : QObject{parent}
 {
 
+
 }
 
 DHKE::~DHKE()
 {
+    if(engine){
+        ENGINE_finish(engine);
+    }
+}
 
+bool DHKE::setEngine(const std::string& engineName)
+{
+    ENGINE_load_builtin_engines();
+    this->engine = ENGINE_by_id(engineName.data());
+    if (engine) {
+        if (ENGINE_set_default(engine, ENGINE_METHOD_RAND)) {
+            if(ENGINE_init(engine)){
+                RAND_set_rand_engine(engine);
+                return true;
+            }
+            else{
+                qWarning().noquote() << "Error initializing " + QString::fromStdString(engineName) + " engine.";
+            }
+        }
+        else{
+            qWarning().noquote() << "Error setting " + QString::fromStdString(engineName) + " as default engine.";
+        }
+    }
+    else{
+        qWarning().noquote() << "Error loading " + QString::fromStdString(engineName) + " engine.";
+    }
+    return false;
 }
 
 QPair<QByteArray, QByteArray> DHKE::gen_ECC_keypair()
 {
-    // Load the TPM2TSS engine
-    ENGINE *engine = ENGINE_by_id("tpm2tss");
-    if (!engine) {
-        qWarning() << "Error loading TPM2TSS engine";
-    }
-    // Set the engine as the default for all algorithms
-     if (!ENGINE_set_default(engine, ENGINE_METHOD_ALL)) {
-         qWarning() << "Error setting TPM2TSS as default engine";
-     }
-
-    // Create the key pair
     EC_KEY *key = EC_KEY_new_by_curve_name(NID_secp256k1);
     EC_KEY_generate_key(key);
 
@@ -38,23 +53,12 @@ QPair<QByteArray, QByteArray> DHKE::gen_ECC_keypair()
     QByteArray publicKey(EC_POINT_point2hex(EC_KEY_get0_group(key), EC_KEY_get0_public_key(key), POINT_CONVERSION_COMPRESSED, NULL));
 
     EC_KEY_free(key);
-    ENGINE_free(engine);
 
     return qMakePair(privateKey, publicKey);
 }
 
 QByteArray DHKE::sign_data(QByteArray dataToSign)
 {
-    // Load the TPM2TSS engine
-    ENGINE *engine = ENGINE_by_id("tpm2tss");
-    if (!engine) {
-        qWarning() << "Error loading TPM2TSS engine";
-    }
-    // Set the engine as the default for all algorithms
-     if (!ENGINE_set_default(engine, ENGINE_METHOD_ALL)) {
-         qWarning() << "Error setting TPM2TSS as default engine";
-     }
-
     EVP_PKEY *privateKey = NULL;
     FILE *keyFile = fopen("self_private_sign_key.pem", "rb");
     if (!keyFile) {
@@ -82,23 +86,12 @@ QByteArray DHKE::sign_data(QByteArray dataToSign)
     EVP_MD_CTX_destroy(mdctx);
     EVP_PKEY_free(privateKey);
     delete[] signature;
-    ENGINE_free(engine);
 
     return signContainer;
 }
 
 bool DHKE::verify_sign(QByteArray rawData, QByteArray signedData)
 {
-    // Load the TPM2TSS engine
-    ENGINE *engine = ENGINE_by_id("tpm2tss");
-    if (!engine) {
-        qWarning() << "Error loading TPM2TSS engine";
-    }
-    // Set the engine as the default for all algorithms
-     if (!ENGINE_set_default(engine, ENGINE_METHOD_ALL)) {
-         qWarning() << "Error setting TPM2TSS as default engine";
-     }
-
     EVP_PKEY *publicKey = NULL;
     FILE *keyFile = fopen("peer_public_sign_key.pem", "rb");
     if (!keyFile) {
@@ -127,7 +120,6 @@ bool DHKE::verify_sign(QByteArray rawData, QByteArray signedData)
 
     EVP_MD_CTX_destroy(mdctx);
     EVP_PKEY_free(publicKey);
-    ENGINE_free(engine);
     return isVerified;
 
 }
@@ -144,19 +136,6 @@ QByteArray DHKE::gen_secret(DHKE::eSecretTypes type)
         privateKeyFile = "self_private_ephemeral_key.pem";
         publicKeyFile = "peer_public_ephemeral_key.pem";
     }
-
-//    ENGINE *engine = ENGINE_by_id("openssl");
-    // Load the TPM2TSS engine
-    ENGINE *engine = ENGINE_by_id("tpm2tss");
-    if (!engine) {
-        qWarning() << "Error loading TPM2TSS engine";
-        return "ERR";
-    }
-    // Set the engine as the default for all algorithms
-     if (!ENGINE_set_default(engine, ENGINE_METHOD_ALL)) {
-         qWarning() << "Error setting TPM2TSS as default engine";
-         return "ERR";
-     }
     // Load the local private key from a file
     EVP_PKEY *private_key = NULL;
     FILE *priv_key_file = fopen(privateKeyFile.constData(), "r");
@@ -225,23 +204,11 @@ QByteArray DHKE::gen_secret(DHKE::eSecretTypes type)
     EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(public_key);
     EVP_PKEY_free(private_key);
-    ENGINE_free(engine);
     return secretContainer;
 }
 
 QByteArray DHKE::hmac_sha256(QByteArray secret_key, QByteArray msg)
 {
-    // Load the TPM2TSS engine
-    ENGINE *engine = ENGINE_by_id("tpm2tss");
-    if (!engine) {
-        qWarning() << "Error loading TPM2TSS engine";
-        return "ERR";
-    }
-    // Set the engine as the default for all algorithms
-     if (!ENGINE_set_default(engine, ENGINE_METHOD_ALL)) {
-         qWarning() << "Error setting TPM2TSS as default engine";
-         return "ERR";
-     }
     unsigned char digest[32];
     HMAC_CTX *ctx = HMAC_CTX_new();
     HMAC_Init_ex(ctx, secret_key.data(), secret_key.size(), EVP_sha256(), nullptr);
@@ -251,7 +218,6 @@ QByteArray DHKE::hmac_sha256(QByteArray secret_key, QByteArray msg)
     QByteArray digestContainer(reinterpret_cast<char*>(digest));
 
     HMAC_CTX_free(ctx);
-    ENGINE_free(engine);
     return digestContainer;
 
 }

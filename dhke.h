@@ -2,6 +2,7 @@
 #define DHKE_H
 
 #include <QObject>
+#include <openssl/engine.h>
 
 class DHKE : public QObject
 {
@@ -16,6 +17,8 @@ public:
     };
 
 public slots:
+
+    bool setEngine(const std::string& engineName);
     QPair<QByteArray, QByteArray> gen_ECC_keypair();
     QByteArray sign_data(QByteArray dataToSign);
     bool verify_sign(QByteArray rawData, QByteArray signedData);
@@ -23,6 +26,7 @@ public slots:
     QByteArray hmac_sha256(QByteArray secret_key, QByteArray msg);
 
 private:
+    ENGINE *engine;
 
 signals:
 
